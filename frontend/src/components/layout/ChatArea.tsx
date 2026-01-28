@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ChatInput } from "./ChatInput";
+import { useChatContext } from "@/contexts/ChatContext";
+import { Message } from "@/lib/api-client";
 import {
   MoreHorizontal,
   Share2,
@@ -15,6 +17,10 @@ import {
   ThumbsDown,
   RefreshCw,
   Sparkles,
+  Loader2,
+  Square,
+  AlertCircle,
+  X,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -28,123 +34,52 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
-}
-
-// Mock data for demonstration
-const mockMessages: Message[] = [
-  {
-    id: "1",
-    role: "user",
-    content: "你好，请帮我解释一下 React 的 useEffect Hook 是如何工作的？",
-    timestamp: new Date(Date.now() - 300000),
-  },
-  {
-    id: "2",
-    role: "assistant",
-    content: `当然！useEffect 是 React 中最重要的 Hook 之一，用于处理副作用操作。
-
-**基本概念：**
-useEffect 让你在函数组件中执行副作用操作，比如数据获取、订阅或手动修改 DOM。
-
-**使用方式：**
-\`\`\`javascript
-useEffect(() => {
-  // 副作用代码
-  return () => {
-    // 清理函数（可选）
-  };
-}, [dependencies]);
-\`\`\`
-
-**关键点：**
-1. **执行时机**：组件渲染后执行
-2. **依赖数组**：控制 effect 何时重新执行
-3. **清理函数**：在组件卸载或 effect 重新执行前调用
-
-需要我详细解释某个特定方面吗？`,
-    timestamp: new Date(Date.now() - 240000),
-  },
-  {
-    id: "3",
-    role: "user",
-    content: "依赖数组为空和不传有什么区别？",
-    timestamp: new Date(Date.now() - 180000),
-  },
-  {
-    id: "4",
-    role: "assistant",
-    content: `这是一个很好的问题！两者的区别如下：
-
-**空依赖数组 \`[]\`：**
-- effect 只在组件**首次渲染后**执行一次
-- 类似于 class 组件的 \`componentDidMount\`
-- 清理函数只在组件**卸载时**执行
-
-**不传依赖数组：**
-- effect 在**每次渲染后**都会执行
-- 包括首次渲染和所有更新
-- 可能导致性能问题或无限循环
-
-\`\`\`javascript
-// 只执行一次
-useEffect(() => {
-  console.log('只在挂载时执行');
-}, []);
-
-// 每次渲染都执行
-useEffect(() => {
-  console.log('每次渲染都执行');
-});
-\`\`\`
-
-**最佳实践：** 始终明确指定依赖数组，避免意外行为。`,
-    timestamp: new Date(Date.now() - 120000),
-  },
-];
-
 interface ChatAreaProps {
   className?: string;
-  title?: string;
   onMenuClick?: () => void;
   showMenuButton?: boolean;
 }
 
 export function ChatArea({
   className,
-  title = "React 性能优化讨论",
   onMenuClick,
   showMenuButton = false,
 }: ChatAreaProps) {
-  const [messages, setMessages] = useState<Message[]>(mockMessages);
-  const [isLoading, setIsLoading] = useState(false);
+  const {
+    currentChat,
+    currentChatId,
+    isLoadingMessages,
+    isStreaming,
+    error,
+    lastFailedMessage,
+    sendMessage,
+    retryLastMessage,
+    stopStreaming,
+    createChat,
+    clearError,
+  } = useChatContext();
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  const messages = currentChat?.messages || [];
+  const title = currentChat?.title || "NexusMind AI";
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
 
   const handleSend = async (content: string) => {
-    // Add user message
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content,
-      timestamp: new Date(),
-    };
-    setMessages((prev) => [...prev, userMessage]);
-    setIsLoading(true);
+    // If no chat selected, create one first
+    if (!currentChatId) {
+      const newChat = await createChat();
+      if (!newChat) return;
+    }
 
-    // Simulate AI response
-    setTimeout(() => {
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: "这是一个模拟的 AI 回复。在实际应用中，这里会调用后端 API 获取真实的 AI 响应。",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, aiMessage]);
-      setIsLoading(false);
-    }, 1500);
+    await sendMessage(content);
   };
 
   return (
@@ -213,25 +148,82 @@ export function ChatArea({
       </header>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 min-h-0">
+      <ScrollArea className="flex-1 min-h-0" ref={scrollAreaRef}>
         <div className="mx-auto max-w-3xl px-4 py-6">
-          {messages.length === 0 ? (
+          {isLoadingMessages ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : messages.length === 0 ? (
             <EmptyState />
           ) : (
             <div className="space-y-6">
               {messages.map((message) => (
-                <MessageBubble key={message.id} message={message} />
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  isStreaming={
+                    isStreaming &&
+                    message.role === "assistant" &&
+                    message.id.startsWith("temp_")
+                  }
+                />
               ))}
-              {isLoading && <LoadingIndicator />}
+              {/* Scroll anchor */}
+              <div ref={messagesEndRef} />
             </div>
           )}
         </div>
       </ScrollArea>
 
+      {/* Error Alert */}
+      {error && (
+        <div className="mx-auto max-w-3xl px-4 py-2">
+          <div className="flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <div className="flex-1">{error}</div>
+            {lastFailedMessage && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={retryLastMessage}
+                className="h-7 gap-1.5 border-destructive/50 text-destructive hover:bg-destructive/20"
+              >
+                <RefreshCw className="h-3 w-3" />
+                重试
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={clearError}
+              className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/20"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Stop Button */}
+      {isStreaming && (
+        <div className="flex justify-center py-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={stopStreaming}
+            className="gap-2"
+          >
+            <Square className="h-3 w-3 fill-current" />
+            停止生成
+          </Button>
+        </div>
+      )}
+
       {/* Input */}
       <div className="shrink-0 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto max-w-3xl p-4">
-          <ChatInput onSend={handleSend} isLoading={isLoading} />
+          <ChatInput onSend={handleSend} isLoading={isStreaming} />
         </div>
       </div>
     </div>
@@ -239,29 +231,51 @@ export function ChatArea({
 }
 
 function EmptyState() {
+  const { createChat } = useChatContext();
+
   return (
     <div className="flex h-full min-h-[400px] flex-col items-center justify-center text-center">
       <div className="mb-4 rounded-full bg-primary/10 p-4">
         <Sparkles className="h-8 w-8 text-primary" />
       </div>
       <h2 className="mb-2 text-xl font-semibold">开始新对话</h2>
-      <p className="max-w-sm text-muted-foreground">
+      <p className="max-w-sm text-muted-foreground mb-4">
         向 NexusMind AI 提问任何问题，获取智能解答、代码帮助或创意灵感。
       </p>
+      <Button onClick={() => createChat()}>
+        <Sparkles className="mr-2 h-4 w-4" />
+        开始对话
+      </Button>
     </div>
   );
 }
 
 interface MessageBubbleProps {
   message: Message;
+  isStreaming?: boolean;
 }
 
-function MessageBubble({ message }: MessageBubbleProps) {
+function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === "user";
+  const isEmpty = !message.content;
+  // 检查是否是错误消息（以 [Error: 开头或包含特定错误标识）
+  const isError = !isUser && (
+    message.content.startsWith("[Error:") ||
+    message.content.startsWith("AI 服务") ||
+    message.content.includes("错误") ||
+    message.content.includes("失败")
+  );
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(message.content);
+  };
 
   return (
     <div
-      className={cn("group flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}
+      className={cn(
+        "group flex gap-3",
+        isUser ? "flex-row-reverse" : "flex-row"
+      )}
     >
       <Avatar className="h-8 w-8 shrink-0">
         {isUser ? (
@@ -279,23 +293,61 @@ function MessageBubble({ message }: MessageBubbleProps) {
           </>
         )}
       </Avatar>
-      <div className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}>
+      <div
+        className={cn(
+          "flex flex-col gap-1 max-w-[85%] min-w-0",
+          isUser ? "items-end" : "items-start"
+        )}
+      >
         <div
           className={cn(
             "rounded-2xl px-4 py-3 text-sm",
             isUser
               ? "bg-primary text-primary-foreground rounded-tr-sm"
+              : isError
+              ? "bg-destructive/10 border border-destructive/30 rounded-tl-sm"
               : "bg-muted rounded-tl-sm"
           )}
         >
-          <div className="whitespace-pre-wrap">{message.content}</div>
+          {isEmpty && isStreaming ? (
+            // Loading indicator for empty streaming message
+            <div className="flex items-center gap-1">
+              <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:-0.3s]" />
+              <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:-0.15s]" />
+              <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/50" />
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "whitespace-pre-wrap [overflow-wrap:break-word] [word-break:break-word]",
+                isError && "text-destructive font-medium"
+              )}
+            >
+              {isError && (
+                <div className="mb-2 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span className="text-xs font-semibold">错误</span>
+                </div>
+              )}
+              {message.content}
+              {/* Streaming cursor */}
+              {isStreaming && !isError && (
+                <span className="inline-block w-1.5 h-4 ml-0.5 bg-current animate-pulse rounded-sm" />
+              )}
+            </div>
+          )}
         </div>
-        {/* Message Actions */}
-        {!isUser && (
+        {/* Message Actions - only show for completed AI messages */}
+        {!isUser && !isStreaming && message.content && (
           <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-7 w-7">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={handleCopy}
+                >
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
@@ -335,23 +387,6 @@ function MessageBubble({ message }: MessageBubbleProps) {
             </Tooltip>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function LoadingIndicator() {
-  return (
-    <div className="flex gap-3">
-      <Avatar className="h-8 w-8 shrink-0">
-        <AvatarFallback className="bg-gradient-to-br from-violet-500 to-purple-600 text-white text-xs">
-          AI
-        </AvatarFallback>
-      </Avatar>
-      <div className="flex items-center gap-1 rounded-2xl rounded-tl-sm bg-muted px-4 py-3">
-        <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:-0.3s]" />
-        <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:-0.15s]" />
-        <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/50" />
       </div>
     </div>
   );

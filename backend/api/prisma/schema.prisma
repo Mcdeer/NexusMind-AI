@@ -1,0 +1,45 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Chat model - represents a conversation
+model Chat {
+  id        String    @id @default(cuid())
+  title     String    @default("新对话")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  
+  // Relations
+  messages  Message[]
+
+  @@map("chats")
+}
+
+// Message model - represents a single message in a chat
+model Message {
+  id        String      @id @default(cuid())
+  content   String      @db.Text
+  role      MessageRole @default(user)
+  createdAt DateTime    @default(now()) @map("created_at")
+  
+  // Relations
+  chatId    String      @map("chat_id")
+  chat      Chat        @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId])
+  @@map("messages")
+}
+
+// Enum for message roles
+enum MessageRole {
+  user
+  assistant
+  system
+}

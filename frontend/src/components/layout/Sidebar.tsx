@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -27,23 +26,10 @@ import {
   ChevronDown,
   Trash2,
   MoreHorizontal,
+  Loader2,
 } from "lucide-react";
-
-interface Conversation {
-  id: string;
-  title: string;
-  updatedAt: Date;
-  isActive?: boolean;
-}
-
-// Mock data for demonstration
-const mockConversations: Conversation[] = [
-  { id: "1", title: "React 性能优化讨论", updatedAt: new Date(), isActive: true },
-  { id: "2", title: "TypeScript 最佳实践", updatedAt: new Date(Date.now() - 86400000) },
-  { id: "3", title: "AI 模型架构设计", updatedAt: new Date(Date.now() - 172800000) },
-  { id: "4", title: "数据库查询优化", updatedAt: new Date(Date.now() - 259200000) },
-  { id: "5", title: "微服务架构方案", updatedAt: new Date(Date.now() - 345600000) },
-];
+import { useChatContext } from "@/contexts/ChatContext";
+import { Chat } from "@/lib/api-client";
 
 interface SidebarProps {
   className?: string;
@@ -51,18 +37,30 @@ interface SidebarProps {
 }
 
 export function Sidebar({ className, onClose }: SidebarProps) {
-  const [conversations] = useState<Conversation[]>(mockConversations);
+  const {
+    chats,
+    currentChatId,
+    isLoadingChats,
+    createChat,
+    selectChat,
+    deleteChat,
+  } = useChatContext();
 
-  const handleNewChat = () => {
-    // TODO: Implement new chat creation
-    console.log("Creating new chat...");
+  const handleNewChat = async () => {
+    const newChat = await createChat();
+    if (newChat) {
+      onClose?.();
+    }
+  };
+
+  const handleSelectConversation = async (id: string) => {
+    await selectChat(id);
     onClose?.();
   };
 
-  const handleSelectConversation = (id: string) => {
-    // TODO: Implement conversation selection
-    console.log("Selecting conversation:", id);
-    onClose?.();
+  const handleDeleteChat = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await deleteChat(id);
   };
 
   return (
@@ -91,13 +89,27 @@ export function Sidebar({ className, onClose }: SidebarProps) {
           <p className="px-3 py-2 text-xs font-medium text-muted-foreground">
             历史对话
           </p>
-          {conversations.map((conversation) => (
-            <ConversationItem
-              key={conversation.id}
-              conversation={conversation}
-              onSelect={() => handleSelectConversation(conversation.id)}
-            />
-          ))}
+          {isLoadingChats ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : chats.length === 0 ? (
+            <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+              暂无对话记录
+              <br />
+              点击上方按钮开始新对话
+            </div>
+          ) : (
+            chats.map((chat) => (
+              <ConversationItem
+                key={chat.id}
+                chat={chat}
+                isActive={chat.id === currentChatId}
+                onSelect={() => handleSelectConversation(chat.id)}
+                onDelete={(e) => handleDeleteChat(chat.id, e)}
+              />
+            ))
+          )}
         </div>
       </ScrollArea>
 
@@ -126,22 +138,29 @@ export function Sidebar({ className, onClose }: SidebarProps) {
 }
 
 interface ConversationItemProps {
-  conversation: Conversation;
+  chat: Chat;
+  isActive: boolean;
   onSelect: () => void;
+  onDelete: (e: React.MouseEvent) => void;
 }
 
-function ConversationItem({ conversation, onSelect }: ConversationItemProps) {
+function ConversationItem({
+  chat,
+  isActive,
+  onSelect,
+  onDelete,
+}: ConversationItemProps) {
   return (
     <div
       className={cn(
         "group flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors hover:bg-sidebar-accent cursor-pointer",
-        conversation.isActive && "bg-sidebar-accent"
+        isActive && "bg-sidebar-accent"
       )}
       onClick={onSelect}
     >
       <div className="flex items-center gap-2 truncate">
         <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className="truncate">{conversation.title}</span>
+        <span className="truncate">{chat.title}</span>
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -155,7 +174,10 @@ function ConversationItem({ conversation, onSelect }: ConversationItemProps) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem className="text-destructive">
+          <DropdownMenuItem
+            className="text-destructive"
+            onClick={onDelete}
+          >
             <Trash2 className="mr-2 h-4 w-4" />
             删除对话
           </DropdownMenuItem>
