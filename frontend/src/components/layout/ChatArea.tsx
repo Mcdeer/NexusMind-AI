@@ -4,10 +4,12 @@ import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ChatInput } from "./ChatInput";
 import { useChatContext } from "@/contexts/ChatContext";
 import { Message } from "@/lib/api-client";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   MoreHorizontal,
   Share2,
@@ -258,12 +260,23 @@ interface MessageBubbleProps {
 function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isEmpty = !message.content;
-  // 检查是否是错误消息（以 [Error: 开头或包含特定错误标识）
-  const isError = !isUser && (
+  
+  // 更精确的错误判断：只检查明确的错误标识，避免误判正常内容
+  // 错误消息通常以特定格式开头，或者包含明确的错误提示
+  const isError = !isUser && message.content && (
+    // 明确的错误格式
     message.content.startsWith("[Error:") ||
-    message.content.startsWith("AI 服务") ||
-    message.content.includes("错误") ||
-    message.content.includes("失败")
+    message.content.startsWith("Error:") ||
+    // AI 服务错误提示（通常出现在错误消息的开头）
+    (message.content.startsWith("AI 服务") && (
+      message.content.includes("暂时不可用") ||
+      message.content.includes("认证失败") ||
+      message.content.includes("访问被拒绝") ||
+      message.content.includes("内部错误")
+    )) ||
+    // 数据库错误
+    message.content.includes("Failed to save message to database") ||
+    message.content.includes("数据库错误")
   );
 
   const handleCopy = () => {
@@ -279,18 +292,13 @@ function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
     >
       <Avatar className="h-8 w-8 shrink-0">
         {isUser ? (
-          <>
-            <AvatarImage src="/avatar.png" />
-            <AvatarFallback className="bg-primary text-primary-foreground text-xs">
-              U
-            </AvatarFallback>
-          </>
+          <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+            U
+          </AvatarFallback>
         ) : (
-          <>
-            <AvatarFallback className="bg-gradient-to-br from-violet-500 to-purple-600 text-white text-xs">
-              AI
-            </AvatarFallback>
-          </>
+          <AvatarFallback className="bg-gradient-to-br from-violet-500 to-purple-600 text-white text-xs">
+            AI
+          </AvatarFallback>
         )}
       </Avatar>
       <div
@@ -319,7 +327,7 @@ function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
           ) : (
             <div
               className={cn(
-                "whitespace-pre-wrap [overflow-wrap:break-word] [word-break:break-word]",
+                "[overflow-wrap:break-word] [word-break:break-word]",
                 isError && "text-destructive font-medium"
               )}
             >
@@ -329,7 +337,76 @@ function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
                   <span className="text-xs font-semibold">错误</span>
                 </div>
               )}
-              {message.content}
+              {!isUser && !isError ? (
+                <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                    // 自定义代码块样式
+                    code: ({ node, inline, className, children, ...props }) => {
+                      const match = /language-(\w+)/.exec(className || '');
+                      return !inline && match ? (
+                        <div className="relative my-2">
+                          <pre className="overflow-x-auto rounded-lg bg-muted p-4">
+                            <code className={className} {...props}>
+                              {children}
+                            </code>
+                          </pre>
+                        </div>
+                      ) : (
+                        <code className="rounded bg-muted px-1.5 py-0.5 text-sm font-mono" {...props}>
+                          {children}
+                        </code>
+                      );
+                    },
+                    // 自定义段落样式
+                    p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                    // 自定义标题样式
+                    h1: ({ children }) => <h1 className="mb-2 mt-4 text-lg font-bold first:mt-0">{children}</h1>,
+                    h2: ({ children }) => <h2 className="mb-2 mt-3 text-base font-bold first:mt-0">{children}</h2>,
+                    h3: ({ children }) => <h3 className="mb-1 mt-2 text-sm font-semibold first:mt-0">{children}</h3>,
+                    // 自定义列表样式
+                    ul: ({ children }) => <ul className="my-2 ml-4 list-disc space-y-1">{children}</ul>,
+                    ol: ({ children }) => <ol className="my-2 ml-4 list-decimal space-y-1">{children}</ol>,
+                    li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                    // 自定义引用样式
+                    blockquote: ({ children }) => (
+                      <blockquote className="my-2 border-l-4 border-muted-foreground/30 pl-4 italic">
+                        {children}
+                      </blockquote>
+                    ),
+                    // 自定义链接样式
+                    a: ({ children, href }) => (
+                      <a href={href} className="text-primary underline hover:text-primary/80" target="_blank" rel="noopener noreferrer">
+                        {children}
+                      </a>
+                    ),
+                    // 自定义表格样式
+                    table: ({ children }) => (
+                      <div className="my-2 overflow-x-auto">
+                        <table className="min-w-full border-collapse border border-border">
+                          {children}
+                        </table>
+                      </div>
+                    ),
+                    th: ({ children }) => (
+                      <th className="border border-border bg-muted px-3 py-2 text-left font-semibold">
+                        {children}
+                      </th>
+                    ),
+                    td: ({ children }) => (
+                      <td className="border border-border px-3 py-2">
+                        {children}
+                      </td>
+                    ),
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap">{message.content}</div>
+              )}
               {/* Streaming cursor */}
               {isStreaming && !isError && (
                 <span className="inline-block w-1.5 h-4 ml-0.5 bg-current animate-pulse rounded-sm" />

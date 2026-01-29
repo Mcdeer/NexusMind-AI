@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -223,7 +223,6 @@ function UserProfile() {
             className="w-full justify-start gap-2 px-2 hover:bg-sidebar-accent"
           >
             <Avatar className="h-8 w-8">
-              <AvatarImage src="/avatar.png" alt="User" />
               <AvatarFallback className="bg-primary text-primary-foreground text-xs">
                 U
               </AvatarFallback>

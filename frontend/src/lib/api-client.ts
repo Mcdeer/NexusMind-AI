@@ -156,6 +156,9 @@ export async function sendMessageStream(
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let hasReceivedContent = false;
+    let hasReceivedComplete = false;
+    let hasReceivedError = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -172,10 +175,14 @@ export async function sendMessageStream(
       buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
       for (const line of lines) {
+        // Skip empty lines
+        if (!line.trim()) continue;
+        
         if (line.startsWith('data: ')) {
-          const data = line.slice(6); // Remove 'data: ' prefix
+          const data = line.slice(6).trim(); // Remove 'data: ' prefix and trim
           
-          if (!data) continue;
+          // Skip empty data
+          if (!data || data === '[DONE]') continue;
 
           try {
             const chunk: StreamChunk = JSON.parse(data);
@@ -183,43 +190,73 @@ export async function sendMessageStream(
             switch (chunk.type) {
               case 'content':
                 if (chunk.content) {
+                  hasReceivedContent = true;
                   callbacks.onContent(chunk.content);
                 }
                 break;
               case 'complete':
                 // Message saved successfully, provide real ID
+                hasReceivedComplete = true;
                 if (chunk.messageId) {
                   callbacks.onComplete(chunk.messageId);
                 }
                 return;
               case 'error':
+                hasReceivedError = true;
                 callbacks.onError(chunk.error || 'Unknown error');
                 return;
             }
           } catch (parseError) {
-            console.error('Failed to parse SSE data:', data, parseError);
+            // Only log parse errors for non-empty data that looks like JSON
+            if (data && (data.startsWith('{') || data.startsWith('['))) {
+              console.warn('Failed to parse SSE data:', data, parseError);
+            }
+            // Silently ignore parse errors for non-JSON data (like empty lines, keep-alive, etc.)
           }
         }
       }
     }
 
-    // Process any remaining data in buffer
-    if (buffer.startsWith('data: ')) {
-      const data = buffer.slice(6);
-      if (data) {
-        try {
-          const chunk: StreamChunk = JSON.parse(data);
-          if (chunk.type === 'content' && chunk.content) {
-            callbacks.onContent(chunk.content);
-          } else if (chunk.type === 'complete' && chunk.messageId) {
-            callbacks.onComplete(chunk.messageId);
-          } else if (chunk.type === 'error') {
-            callbacks.onError(chunk.error || 'Unknown error');
+    // Process any remaining data in buffer after stream ends
+    if (buffer.trim()) {
+      // Try to process remaining buffer data
+      const lines = buffer.split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          
+          // Skip empty data or [DONE] markers
+          if (!data || data === '[DONE]') continue;
+
+          try {
+            const chunk: StreamChunk = JSON.parse(data);
+            if (chunk.type === 'content' && chunk.content) {
+              hasReceivedContent = true;
+              callbacks.onContent(chunk.content);
+            } else if (chunk.type === 'complete' && chunk.messageId) {
+              hasReceivedComplete = true;
+              callbacks.onComplete(chunk.messageId);
+              return;
+            } else if (chunk.type === 'error') {
+              hasReceivedError = true;
+              callbacks.onError(chunk.error || 'Unknown error');
+              return;
+            }
+          } catch {
+            // Silently ignore parse errors for final chunk - it might be incomplete or non-JSON
           }
-        } catch {
-          // Ignore parse errors for final chunk
         }
       }
+    }
+
+    // If stream ended normally but we didn't receive complete or error event,
+    // and we received content, assume success (backend should have sent complete, but handle gracefully)
+    if (hasReceivedContent && !hasReceivedComplete && !hasReceivedError) {
+      // This shouldn't happen if backend is working correctly, but handle gracefully
+      // We'll let the ChatContext handle this by checking if message was saved
+      console.warn('Stream ended without complete event, but content was received');
     }
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {

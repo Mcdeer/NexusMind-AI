@@ -228,6 +228,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         )
       );
 
+      // Track if callbacks were called to ensure state is properly reset
+      let hasCompleted = false;
+      let hasErrored = false;
+
       try {
         // 3. Stream AI response
         await sendMessageStream(
@@ -250,6 +254,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             },
             onComplete: (messageId) => {
               // Message saved successfully - update temporary message ID to real ID
+              hasCompleted = true;
               setIsStreaming(false);
               setCurrentChat((prev) => {
                 if (!prev) return prev;
@@ -266,6 +271,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               loadChats();
             },
             onError: (errorMsg) => {
+              hasErrored = true;
               setError(errorMsg);
               setIsStreaming(false);
               // Save failed message for retry
@@ -284,6 +290,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           },
           abortControllerRef.current.signal
         );
+
+        // Safety check: if stream ended normally but no callback was called,
+        // ensure streaming state is reset (shouldn't happen with proper backend, but handle gracefully)
+        if (!hasCompleted && !hasErrored) {
+          console.warn('Stream ended without complete or error callback');
+          setIsStreaming(false);
+        }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : "Failed to send message";
         setError(errorMsg);
